@@ -379,6 +379,8 @@ catFiles = function(files, outFile, dir = c(NA), split = c("\\|"), del = c(F), c
 	#Debug	
 	#files = paste(paste0(sampleFiles$dir, sampleFiles$collapseCpgFile), collapse = "|"); outFile = paste0(sample, callCollapseExt); dir = NA; split = "\\|"; del = F
 	#outFile = paste0(files$sample[i], ".fq", if (gz) ".gz"); files = fqTemp; del = T; split = "\\|";
+	#files = paste0(chrCollapseCpgFiles[file.exists(chrCollapseCpgFiles)], collapse = "|"); outFile = collapseCpgFile; compress = T; del = F; overwrite = T;
+
 
 	#ensure there are files so no error is thrown
 	if (!is.blank(files)) {	
@@ -393,8 +395,22 @@ catFiles = function(files, outFile, dir = c(NA), split = c("\\|"), del = c(F), c
 	
 		if (!is.na(split)) files = unlist(strsplit(files, split))
 		if (!is.na(dir)) files = paste0(dir, files) else dir = paste0(dirname(files[1]), "/")
+		
+		### Split up otherwise system command fails
+		if (length(files) > 1e3) {
+		
+			for (i in 1:ceiling(length(files) / 1e3)) {
 
-		system(paste("cat", paste(files, collapse = " "), ">", outFile))
+				startFile = ((i-1) * 1e3) + 1
+				endFile = min(i * 1e3, length(files))
+			
+				if (i == 1) {
+					system(paste("cat", paste(files[startFile:endFile], collapse = " "), ">", outFile))
+				} else {
+					system(paste("cat", paste(files[startFile:endFile], collapse = " "), ">>", outFile))
+				}
+			}
+		} else system(paste("cat", paste(files, collapse = " "), ">", outFile))
 
 		#handle gz compression
 		if (compress) {
@@ -993,6 +1009,7 @@ bedgraph2bw = function(bgFile, genome = c(NA), si = c(NA), chromFile = c(NA), bw
 
 	if (!is.na(chromFile)) {
 		bwCmd = paste("bedGraphToBigWig", gsub(".gz$", "", bgFile), chromFile, bwFile)
+		#print(bwCmd)
 		system(bwCmd)
 	} else warning("No compatible chromosome sequence length data");
 	
@@ -1022,6 +1039,7 @@ bismarkBam2callChg = function(...) bismarkBam2call(callChar = c("h"), ...)
 bismarkBam2call = function(bamFile, callFile = c(NA), covFile = c(NA), collapseCpgFile = c(NA), collapseCpgCovFile = c(NA), trim1 = c(0, 0), trim2 = c(0, 0), trimFile = c(NA), callChar = c("z"), compress = c(T), threads = c(10), bWhat = c("rname", "strand", "pos", "flag", "qwidth", "cigar"), maxRegionSize = c(Inf), overwrite = c(F), ... ) {
 	#Debug
 	#bamFile = paste0(files$dir[i], files$bamFile[i]); callFile = NA; covFile = NA; collapseCpgFile = paste0(files$dir[i], files$collapseCpgFile[i]); collapseCpgCovFile = paste0(files$dir[i], files$covFile[i]); trim1 = c(0, 0); trim2 = c(0, 0); trimFile = NA; callChar = "z"; compress = T; threads = threads; bWhat = c("rname", "strand", "pos", "flag", "qwidth", "cigar"); maxRegionSize = 1e7
+	#bamFile = paste0(samples$dir[i], samples$bamFile[i]); callFile = NA; covFile = NA; collapseCpgFile = paste0(samples$dir[i], samples$collapseCpgFile[i]); collapseCpgCovFile = paste0(samples$dir[i], samples$covFile[i]); trim1 = c(0, 0); trim2 = c(0, 0); trimFile = NA; callChar = "z"; compress = T; threads = threads; maxRegionSize = 5e6; bWhat = c("rname", "strand", "pos", "flag", "qwidth", "cigar");
 
 	bf = BamFile(bamFile)
 	bParam = ScanBamParam(what = bWhat, tag = "XM")
@@ -1322,43 +1340,55 @@ gFragSize = NA;
 gBwFile = "gsub('.bam', paste('.frag', paste(round(fragSizes, 0), collapse = '_'), '.norm', format(normReads, scientific = FALSE), '.bw', sep = ''), bamFiles)";
 
 #bamToBigWig function: converts a bam file into a bigWig coverage file.  Removes chromosomes that match the variable removeChrs by grepl.  Normalizes for read count .Only reads not in removeChrs are counted. The normReads variable sets the sequencing coverage. The default normalization is reads per million (e.g. normRead = 1e6).  
-bamToBigWig = function(bamFiles, bwFile = c(gBwFile), fragSizes = c(gFragSize), sigDigits = c(gSigDigits), readCounts = c(NA), normReads = c(gNormReads), extCall = c(T), sbf = scanBamFlag(isUnmappedQuery = F, isSecondaryAlignment = F, isDuplicate = F), removeChrs = c(NA), threads = c(1), ...) {
+bamToBigWig = function(bamFiles, bwFile = c(gBwFile), fragSizes = c(gFragSize), sigDigits = c(gSigDigits), readCounts = c(NA), normReads = c(gNormReads), extCall = c(T), sbp = c(NA), sbf = scanBamFlag(isUnmappedQuery = F, isSecondaryAlignment = F, isDuplicate = F), removeChrs = c(NA), threads = c(1), ...) {
+
 	#Debug
 	#bamFiles = paste0(files$dir[i], files$bamFile[i]); bwFile = gBwFile; fragSizes = files$fragSize[i]; sigDigits = gSigDigits; normReads = 1e6; normFactor = NA; extCall = T; sbf = scanBamFlag(isUnmappedQuery = F, isSecondaryAlignment = F, isDuplicate = F); removeChrs = removeChrs; threads = threads
 	#bamFiles = paste0(files$dir[i], files$bamFile[i]); bwFile = paste0(files$dir[i], files$sample[i], ".rpm.bw"); fragSizes = gFragSize; sigDigits = gSigDigits; readCounts = NA; normReads = gNormReads; normFactor = NA; flag = sbf; removeChrs = "gl00|chrUn"; extCall = T
 	#bamFiles = bamFiles; bwFile = paste0(covDir, grp, ".union.rppm.bw"); fragSizes = gFragSize; sigDigits = gSigDigits; readCounts = sum(filesGrp$unique.incChr.reads); normReads = gNormReads / frip; sbf = sbf; threads = threads; removeChrs = removeChrs;	
 	#bamFiles = paste0(files$dir[i], files$bamFile[i]); bwFile = paste0(outDir, make.names(files$sample[i]), ".union.rppm.bw"); fragSizes = gFragSize; sigDigits = gSigDigits; readCounts = files$nondup.chrInc.reads[i]; normReads = gNormReads / files[[paste0("frip.", sig)]][i]; sbf = flag; removeChrs = removeChr; threads = threads;
+	#bamFiles = baseGrp$bamFile; bwFile = paste0(bwDir, "CoMMpass.baseline.BM.", name, ".q", grp, ".bw"); fragSizes = gFragSize; sigDigits = gSigDigits; readCounts = baseGrp$unique.incChr.reads; normReads = gNormReads; extCall = T; sbp = sbp; sbf = scanBamFlag(isUnmappedQuery = F, isSecondaryAlignment = F, isDuplicate = F); threads = threads; removeChrs = removeChrsBigWig; #
 
 	#if the number of bamFiles & fragSizes aren't equal then through warning
 	if (!all(is.na(fragSizes)) & length(bamFiles) != length(fragSizes)) warning("Number of bamFiles != number of fragSizes")
  
-	#Get genome version and seqinfo
-	si = list(); for (i in 1:length(bamFiles)) si[[i]] = seqinfo(BamFile(bamFiles[i]))
-	chrs = unique(unlist(lapply(si, seqnames))); 	#get all chromosomes in bamFiles
-	chrs = chrs[order(chrs)]
-	if (!is.na(removeChrs)) chrs = chrs[!grepl(removeChrs, chrs)]; 	#remove chromosomes that match removeChrs
-
-	gr = GRanges(seqnames = chrs,  ranges = IRanges(start = rep(0, length(chrs)), end = si[[1]]@seqlengths[match(chrs, si[[1]]@seqnames)]))
-
 	#Get readcounts for each bamFile
 	if (all(is.na(readCounts))) {
 		readCounts = list()
 		for (i in 1:length(bamFiles)) readCounts[[i]] = sum(countBam(bamFiles[i], param = ScanBamParam(flag = sbf, which = gr))$records)
 	}
 
+	### list of scan bam params for multi-threading
+	sbps = list()
+
+	if (suppressWarnings(is.na(sbp))) {
+
+		if (!is.blank(removeChrs)) warning("Variable sbp (scanBamParam) overrides removeChrs")
+
+		#Get genome version and seqinfo
+		si = list(); for (i in 1:length(bamFiles)) si[[i]] = seqinfo(BamFile(bamFiles[i]))
+		chrs = unique(unlist(lapply(si, seqnames))); 	#get all chromosomes in bamFiles
+		chrs = chrs[order(chrs)]
+		if (!is.na(removeChrs)) chrs = chrs[!grepl(removeChrs, chrs)]; 	#remove chromosomes that match removeChrs
+
+		gr = GRanges(seqnames = chrs,  ranges = IRanges(start = rep(0, length(chrs)), end = si[[1]]@seqlengths[match(chrs, si[[1]]@seqnames)]))
+
+		#set up scan bam params
+		for (chr in chrs) sbps[[chr]] = ScanBamParam(flag = sbf, which = gr[which(chrs == chr)])
+	} else { #If sbp is not blank make sbps for each chromosomes
+		bamw = bamWhich(sbp)
+		for (chr in names(bamw)) sbps[[chr]] = ScanBamParam(flag = sbf, which = GRanges(seqnames = chr, ranges = bamw[[chr]]))
+	}
+
 	#Create bigwig and bedfile output file names	
 	if (bwFile == gBwFile) bwFile = eval(parse(text = gBwFile))
 	bgFile = paste0(bwFile, ".bedGraph")
-	bgFiles = paste0(paste0(bwFile, ".bedGraph"), ".", chrs)
+	bgFiles = paste0(paste0(bwFile, ".bedGraph"), ".", names(sbps))
 	
-	#set up scan bam params
-	sbps = list()	
-	for (chr in chrs) sbps[[chr]] = ScanBamParam(flag = sbf, which = gr[which(chrs == chr)])
-
 	print(paste("bamToBedgraph", Sys.time()))
 
 	#parallel call to bismarkBam2callDt
-	mcmapply(bamToBedgraph, bamFiles. = rep(list(bamFiles), length(chrs)), bgFile. = bgFiles, fragSizes. = fragSizes, sigDigits. = sigDigits, normFactors. = rep(list(normReads / unlist(readCounts)), length(chrs)), sbp. = sbps, message. = chrs, mc.cores = threads) 
+	mcmapply(bamToBedgraph, bamFiles. = rep(list(bamFiles), length(sbps)), bgFile. = bgFiles, fragSizes. = fragSizes, sigDigits. = sigDigits, normFactors. = rep(list(normReads / unlist(readCounts)), length(sbps)), sbp. = sbps, message. = names(sbps), mc.cores = threads) 
 
 	#concatenate and clean-up
 	catFiles(bgFiles, bgFile)
@@ -1367,19 +1397,18 @@ bamToBigWig = function(bamFiles, bwFile = c(gBwFile), fragSizes = c(gFragSize), 
 	#if external calll write to bedgraph then call Kent tools
 	if(extCall) {
 		tmpFile = paste0(bwFile, ".temp")
-		writeSiChromSizes(si[[1]], tmpFile, removeChrs)
+		writeSiChromSizes(seqinfo(BamFile(bamFiles[1])), tmpFile, removeChrs)
 		system(paste("bedGraphToBigWig", bgFile, tmpFile, bwFile)); 		#sort -k1,1N -k2,2n unsrt.bed > srt.bed
 		file.remove(bgFile);
 		file.remove(tmpFile);
 	} else {
 		cv = fread(bgFile)
-		#cvr = GRanges(seqnames = cv[[1]], ranges = IRanges(start = cv[[2]], end = cv[[3]]), score = cv[[4]])		
-		export.bw(cv, bwFile, format = "bw"); #, seqlengths = seqlengths(si[[1]])
+		cvr = GRanges(cv[[1]], IRanges(cv[[2]], cv[[3]]-1), score = cv[[4]], seqinfo = seqinfo(BamFile(bamFiles[1])))		
+		export.bw(cvr, bwFile, format = "bw"); #, seqlengths = seqlengths(si[[1]])
 	}
 	
 	invisible(bwFile)
 }
-
 
 gBgFile = "gsub('.bam', paste('.frag', paste(round(fragSizes, 0), collapse = '_'), '.norm', format(normReads, scientific = FALSE), '.bedGraph', sep = ''), bamFiles)";
 
@@ -1389,7 +1418,7 @@ bamToBedgraph = function(bamFiles., bgFile. = c(gBgFile), normFactors. = c(NA), 
 	#Debug
 	#bamFiles. = bamFiles; bgFile = bgFiles[[chr]]; fragSizes. = fragSizes; sigDigits. = gSigDigits; normFactors = normReads / unlist(readCounts); sbp = sbps[[chr]]
 	#bamFiles. = bamFiles; bgFile. = bgFiles[[chr]]; fragSizes. = fragSizes; sigDigits. = sigDigits; normFactors. = normReads / unlist(readCounts); sbp. = sbps[[chr]]; message. = chr;
-	#bamFiles. = bamFiles; bgFile. = bgFiles[1]; normFactors. = rep(list(normReads / unlist(readCounts)), length(chrs))[1]; fragSizes. = fragSizes; bwFile = bwFile; sbp. = sbps[[1]]; sigDigits. = gSigDigits
+	#bamFiles. = bamFiles; bgFile. = bgFiles[1]; normFactors. = rep(list(normReads / unlist(readCounts)), length(sbps))[[1]]; fragSizes. = fragSizes; bwFile = bwFile; sbp. = sbps[[1]]; sigDigits. = gSigDigits; message. = names(sbps)[1]
 
 	if (!is.na(message.)) print(paste(message., Sys.time()))
 
@@ -1414,7 +1443,7 @@ bamToBedgraph = function(bamFiles., bgFile. = c(gBgFile), normFactors. = c(NA), 
 		for (chr in names(cv[[i]])) if (all(cv[[i]][[chr]]@values == 0)) cv[[i]][[chr]] = NULL
 
 		#normalize coverage to reads
-		if (!is.na(normFactors.)) cv[[i]] = round(cv[[i]] * normFactors.[[i]], sigDigits.)
+		if (!is.na(normFactors.[[i]])) cv[[i]] = round(cv[[i]] * normFactors.[[i]], sigDigits.)
 
 		if (i == 1) cvs = cv[[i]] else cvs = cvs + cv[[i]]
 
@@ -1455,9 +1484,12 @@ makeBamHist = function(bamFiles, bed, outFile = c(gHistOutFile), range, bin = c(
 	#Debug
 	#bamFiles = bamFile; bed = proms; outFile = outFile; range = range; bin = bin; fragSizes = gFragSize; normReads = gNormReads; readCounts = NA; sigDigits = gSigDigits; flag = scanBamFlag(isUnmappedQuery = F, isSecondaryAlignment = F, isDuplicate = F); threads = 24; sense = T
 	#bamFiles = bamFile; bed = motifr; outFile = statFile; range = range; bin = bin; fragSizes = fragSizes; normReads = 1e6 / atacSamples$frip.0.01[j]; readCounts = NA; sigDigits = gSigDigits; flag = scanBamFlag(isUnmappedQuery = F, isSecondaryAlignment = F, isDuplicate = F); threads = threads; sense = T
+	#bamFiles = bamFile; bed = peakscr; outFile = peakFile; range = range; bin = bin; fragSizes = gFragSize; normReads = 1e6 / files$frip.0.01[i]; readCounts = files$unique.incChr.reads[i]; sigDigits = gSigDigits; flag = scanBamFlag(isUnmappedQuery = F, isSecondaryAlignment = F, isDuplicate = F); threads = threads; sense = F
+
 
 	#Determine mean width of bed range
 	meanWidth = round(mean(width(bed))) - 1
+	medianWidth = round(median(width(bed))) - 1
 
 	if (outFile == gHistOutFile)  outFile = eval(parse(text = outFile))
 
@@ -1483,7 +1515,7 @@ makeBamHist = function(bamFiles, bed, outFile = c(gHistOutFile), range, bin = c(
 		sbps[[chr]] = ScanBamParam(flag = flag, which = GRanges(seqnames = chr, ranges = IRanges(start = 0, end = si@seqlengths[si@seqnames == chr])))
 	}
 
-	hists = mcmapply(bamToHist, bamFiles. = rep(bamFiles, length(bedChrs)), bed. = bedChrs, outFile. = outFileChrs, range. = range, bin. = bin, meanWidth. = meanWidth, fragSizes. = fragSizes, normReads. = normReads, readCounts. = readCounts, sigDigits. = sigDigits, sbp = sbps, chr. = chrs, col.names. = col.names, sense. = sense, mc.cores = threads)
+	hists = mcmapply(bamToHist, bamFiles. = rep(bamFiles, length(bedChrs)), bed. = bedChrs, outFile. = outFileChrs, range. = range, bin. = bin, width. = medianWidth, fragSizes. = fragSizes, normReads. = normReads, readCounts. = readCounts, sigDigits. = sigDigits, sbp = sbps, chr. = chrs, col.names. = col.names, sense. = sense, mc.cores = threads)
 
 	#concatenate and clean-up
 	catFiles(outFileChrs, outFile)
@@ -1493,20 +1525,20 @@ makeBamHist = function(bamFiles, bed, outFile = c(gHistOutFile), range, bin = c(
 }
 
 #### Helper function to parallelize makebamHist
-bamToHist = function(bamFiles., bed., outFile., range., bin. = c(gHistBin), meanWidth. = c(0), fragSizes. = c(gFragSize), normReads. = c(gNormReads), readCounts. = c(NA), sigDigits. = c(gSigDigits), sbp = ScanBamParam(scanBamFlag(isUnmappedQuery = F, isSecondaryAlignment = F, isDuplicate = F)), chr. = c(NA), col.names. = c(F), sense. = c(any(strand(bed.) != "*")), ...) {
+bamToHist = function(bamFiles., bed., outFile., range., bin. = c(gHistBin), width. = c(0), fragSizes. = c(gFragSize), normReads. = c(gNormReads), readCounts. = c(NA), sigDigits. = c(gSigDigits), sbp = ScanBamParam(scanBamFlag(isUnmappedQuery = F, isSecondaryAlignment = F, isDuplicate = F)), chr. = c(NA), col.names. = c(F), sense. = c(any(strand(bed.) != "*")), ...) {
 
 	#Debug
-	#bamFiles. = bamFiles; bed. = bedChrs[[1]]; outFile. = outFileChrs[1]; range. = range; bin. = bin; meanWidth. = meanWidth; fragSizes. = fragSizes; sigDigits. = sigDigits; normReads. = normReads; readCounts. = readCounts; sbp = sbps[[1]]; chr. = chrs[1]; col.names. = col.names[1]; sense. = sense
+	#bamFiles. = bamFiles; bed. = bedChrs[[1]]; outFile. = outFileChrs[1]; range. = range; bin. = bin; width. = medianWidth; fragSizes. = fragSizes; sigDigits. = sigDigits; normReads. = normReads; readCounts. = readCounts; sbp = sbps[[1]]; chr. = chrs[1]; col.names. = col.names[1]; sense. = sense
 
 	print(paste(chr., Sys.time()))
 
 	#binned region to calculate enrichment
-	bins = seq(from = -range., to = range. + meanWidth., by = bin.)
+	bins = seq(from = -range., to = range. + width., by = bin.)
 
 	#Create bin labels, normalize distance within bed region 
 	binlabs = bins
-	binlabs[binlabs > 0 & binlabs <= meanWidth.] = binlabs[binlabs > 0 & binlabs <= meanWidth.] / meanWidth.
-	binlabs[binlabs > meanWidth.] = binlabs[binlabs > meanWidth.] - meanWidth. + 1
+	binlabs[binlabs > 0 & binlabs <= width.] = binlabs[binlabs > 0 & binlabs <= width.] / width.
+	binlabs[binlabs > width.] = binlabs[binlabs > width.] - width. + 1
 
 	if (!is.null(bed.@elementMetadata$name) & length(bed.@elementMetadata$name) == length(unique(bed.@elementMetadata$name))) {
 		histRows = bed.@elementMetadata$name
@@ -1531,12 +1563,12 @@ bamToHist = function(bamFiles., bed., outFile., range., bin. = c(gHistBin), mean
 			bam = granges(readGAlignments(as.character(bamFiles.[i]), param = sbp));
 		} else bam = suppressWarnings(resize(granges(readGAlignments(as.character(bamFiles.[i]), param = sbp)), width = fragSizes.[i], fix = "start"));
 
-		if (is.na(sense.)) {
+		if (is.na(sense.) || !sense.) {
 			#Calculate base level coverage
 			cv = coverage(bam)[[chr.]];
 
 			#Calculate the running mean to put into bins
-			means = runmean(cv, k = bin.)
+			means = runsum(cv, k = bin.)
 
 			#Get the names of rows for chromosome chr
 			chrRows = rownames(hists[[i]])[as.character(seqnames(bed.)) == chr.];
@@ -1559,8 +1591,8 @@ bamToHist = function(bamFiles., bed., outFile., range., bin. = c(gHistBin), mean
 			cvNeg = coverage(bamNeg)[[chr.]];
 
 			#Calculate the running mean to put into bins
-			meansPos = runmean(cvPos, k = bin.)
-			meansNeg = runmean(cvNeg, k = bin.)
+			meansPos = runsum(cvPos, k = bin.)
+			meansNeg = runsum(cvNeg, k = bin.)
 
 			#Get the names of rows for chromosome chr
 			chrRowsPos = rownames(hists[[i]])[as.character(seqnames(bed.)) == chr. & as.character(strand(bed.)) == "+"];
@@ -1688,14 +1720,14 @@ bwToHist = function(bwFiles., bed., outFile., range., bin. = c(gHistBin), meanWi
 		fo = findOverlaps(bw, trs)
 		so = subsetByOverlaps(bw, trs)
 
-		hists[[i]][217] = 1
+		#hists[[i]][217] = 1
 	
 		if (is.na(sense.)) {
 			#Calculate base level coverage
 			cv = coverage(bw)[[chr.]];
 			
 			#Calculate the running mean to put into bins
-			means = runmean(cv, k = bin.)
+			means = runsum(cv, k = bin.)
 
 			#Get the names of rows for chromosome chr
 			chrRows = rownames(hists[[i]])[as.character(seqnames(bed.)) == chr.];
@@ -1718,8 +1750,8 @@ bwToHist = function(bwFiles., bed., outFile., range., bin. = c(gHistBin), meanWi
 			cvNeg = coverage(bamNeg)[[chr.]];
 
 			#Calculate the running mean to put into bins
-			meansPos = runmean(cvPos, k = bin.)
-			meansNeg = runmean(cvNeg, k = bin.)
+			meansPos = runsum(cvPos, k = bin.)
+			meansNeg = runsum(cvNeg, k = bin.)
 
 			#Get the names of rows for chromosome chr
 			chrRowsPos = rownames(hists[[i]])[as.character(seqnames(bed.)) == chr. & as.character(strand(bed.)) == "+"];
